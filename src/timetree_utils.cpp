@@ -1,5 +1,4 @@
-#include "nlohmann/json.hpp"
-#include "../include/timetree_utils.h"
+#include "timetree_utils.h"
 #include "curlpp/cURLpp.hpp"
 #include "curlpp/Options.hpp"
 #include "curlpp/Easy.hpp"
@@ -7,14 +6,13 @@
 #include <string>
 #include <sstream>
 #include <random>
+using namespace std;
 
-using json = nlohmann::json;
-
-// Generate a 
-std::string generateSimpleUUID() {
-    std::string uuid = "";
+// Generate a UUID string of 32 hex characters.
+string generateSimpleUUID() {
+    string uuid = "";
     for (int i = 0; i < 32; i++) {
-        uuid += std::string(random(), 16);
+        uuid += string(random(), 16);
     }
     return uuid;
 }
@@ -22,16 +20,22 @@ std::string generateSimpleUUID() {
 // Login to TimeTree using credentials and obtain a session token
 char const * getTTSessionToken(char const * username, char const * password) {
     try {
+        cout << "Fetching TimeTree session for user: " << username << endl;
+
         curlpp::Cleanup myCleaner;
         curlpp::Easy request;
 
-        request.setOpt(new curlpp::options::Url(API_URL));
+        request.setOpt(new curlpp::options::Url(string(API_URL) + "/auth/email/signin"));
 
-        std::list<std::string> headers;
-        headers.push_back("uid: " + std::string(username));
-        headers.push_back("password: " + std::string(password));
-        headers.push_back("uuid: " + generateSimpleUUID());
+        string payload = "{uid: " + string(username) +
+                         "password: " + string(password)+
+                         "uuid: " + string(generateSimpleUUID()) + "}";
+        request.setOpt(new curlpp::options::PostFields(payload));
+        request.setOpt(new curlpp::options::PostFieldSize(payload.length()));
 
+        list<std::string> headers;
+        headers.push_back("Content-Type: application/json");
+        headers.push_back("X-Timetreea:" + string(API_AGENT));
         request.setOpt(new curlpp::options::HttpHeader(headers));
 
         std::stringstream responseBody;
@@ -40,12 +44,12 @@ char const * getTTSessionToken(char const * username, char const * password) {
         request.perform();
 
         // Access the content
-        std::string responseString = responseBody.str();
-        std::cout << "Body: " << responseString << std::endl;
+        string responseString = responseBody.str();
+        cout << "Body: " << responseString << endl;
 
         }
     catch (curlpp::RuntimeError & e) {
-        std::cerr << e.what() << std::endl;
+        cerr << e.what() << endl;
     }
     return nullptr;
 }

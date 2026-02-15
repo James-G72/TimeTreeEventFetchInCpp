@@ -1,13 +1,12 @@
 #include <iostream>
 #include <cstdio>
-#include "../include/timetree_utils.h"
-#include "../include/tt_config.h"
+#include "timetree_utils.h"
+#include "tt_config.h"
 #include <string>
 using namespace std;
 
-const int test_var = 1;
-
-int main() {
+int main(int argc, char* argv[]) {
     char const * sessionToken = getTTSessionToken(TT_USERNAME, TT_PASSWORD);
+    cout << "Session Token: " << sessionToken << endl;
     return 0;
 }
