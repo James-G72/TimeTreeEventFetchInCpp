@@ -8,6 +8,15 @@
 using namespace std;
 namespace chr = std::chrono;
 
+struct RecurringEventInfo {
+    // A struct to hold the information about a recurring event. This is used to generate the TTEventRecur objects.
+    string frequency;
+    int interval;
+    string wkst;
+    string byday;
+    string until;
+};
+
 class TTTime{
     // Holds a time in the format milliseconds since Epoch. This is the format used by the TimeTree API.
     // Most important functionality is to handle the addition and subtraction of days, weeks etc accross
@@ -101,41 +110,75 @@ class TTTime{
 };
 
 class TTEvent{
+    // Represents a single event as returned by the TimeTree API. This is used to store the events in 
+    // the calendar object. Can have recurring information that is then used to generate TTEventRecur 
+    // objects.
     public:
-        int t = 1;
+        int id;
+        string title;
+        int parennt_id;
+        bool deleted;
+        TTTime deleted_date;
+        int author_id;
+        string title;
+        TTTime updated;
+        TTTime start;
+        TTTime end;
+        chr::milliseconds duration;
+        int label_id;
+        bool recurs;
+        int recur_exceptions;
+        RecurringEventInfo recur_rules;
+
         TTEvent(vector<string> event_def) {
 
+        };
+};
+
+class TTEventRecur{
+    // An additional type of event that represents a single instance of a recurring event. 
+    // This is required to handle the fact that the TimeTree API returns recurring events as a 
+    // single event definition with a recurrence rule,
+    public:
+        int parent_id;
+        TTTime start_time;
+        TTTime end_time;
+        string title;
+        TTEventRecur(TTEvent parent, TTTime instance_start, TTTime instance_end) {
+            parent_id = parent.id;
+            start_time = instance_start;
+            end_time = instance_end;
+            title = parent.title;
         };
 };
 
 class TTCalendar{
     public:
         // Need to redefine the TTEvent and TTTime types so that we can have vecotrs of them.
-        vector<int> events;
-        vector<int> recur_events;
+        map<int, TTEvent> events;
+        map<int, TTEventRecur> recur_events;
         vector<int> bounds;
         vector<int> deleted_events;
         string s_id;
         vector<string> login_info;
         char* name;
         char* alias;
-        int unique_id;
+        string unique_id;
         map<int, string> known_users;
         TTTime created;
 
-        TTCalendar(string sessionID, vector<string> calender_def, vector<string> login) {
+        TTCalendar(string sessionID, map<string, string> calender_def, vector<string> login) {
             login_info = login;
             s_id = sessionID;
-
+            _extract_calendar_info(calender_def);
         };
 
-        int _extract_calendar_info(vector<string> definition) {
+        int _extract_calendar_info(map<string, string> definition) {
             // Called as part of the calendar initialisation to unpack the API response.
-            char* name = definition["name"];
-            char* alias = definition["alias_code"];
-            int unique_id = definition["id"];
-            known_users = map([[user["user_id"], user["name"]] for user in resp["calendar_users"]])
+            auto name = definition["name"];
+            auto alias = definition["alias_code"];
+            string unique_id = definition["id"];
             
-            created = TTTime(ms_since_e=resp["created_at"])
-        }
+            created = TTTime(stoi(definition["created_at"]));
+        };
 };
