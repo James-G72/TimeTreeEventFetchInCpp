@@ -1,0 +1,36 @@
+# Generated C/C++ binaries and build directories
+*.o
+*.obj
+*.a
+*.lib
+*.exe
+*.dll
+*.so
+*.so.*
+*.dylib
+*.pdb
+*.ilk
+*.exp
+/build*/
+/cmake-build*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Testing/
+
+# Local editor settings
+/.vscode/
+/.idea/
+*.user
+*.suo
+
+# Python test caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local credentials
+config.txt
+.env
+.env.*
