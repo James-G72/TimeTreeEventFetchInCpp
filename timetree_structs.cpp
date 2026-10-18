@@ -8,6 +8,8 @@
 #include <sstream>
 #include <iomanip>
 #include <limits>
+#include <stdexcept>
+#include <utility>
 using namespace std;
 namespace chr = std::chrono;
 #include "vendor/json.hpp"
@@ -266,13 +268,17 @@ vector<TTEventRecur> TTEvent::recur_within_dates(TTTime start_date, TTTime end_d
 }
 
 // Defining TTCalendar functions
-TTCalendar::TTCalendar(string sessionID, json calendar_def, const UserCredentials login) {
-    s_id = sessionID;
+TTCalendar::TTCalendar(json calendar_def, TTEventFetcher fetch_page)
+    : _fetch_page(std::move(fetch_page)) {
     _extract_calendar_info(calendar_def);
-    login_info = login;
-};
+}
+
+void TTCalendar::set_event_fetcher(TTEventFetcher fetch_page) {
+    _fetch_page = std::move(fetch_page);
+}
 
 void TTCalendar::fetch_events(std::optional<TTTime> since_date, std::optional<TTTime> until_date) {
+    if (!_fetch_page) throw std::logic_error("Set an event-page callback before fetching events");
     TTTime lower = since_date.value_or(created - chr::hours{24 * 7 * 52});
     TTTime upper = until_date.value_or(TTTime::now() + chr::hours{24 * 7 * 1000});
     if (upper < lower) throw std::invalid_argument("End date precedes start date");
@@ -280,16 +286,7 @@ void TTCalendar::fetch_events(std::optional<TTTime> since_date, std::optional<TT
     set<long long> cursors;
     long long since = -1;
     while (true) {
-        json response;
-        for (int attempt = 0; ; ++attempt) {
-            try {
-                response = requestCalendarEvents(s_id, unique_id, since);
-                break;
-            } catch (const TTHttpError& error) {
-                if (attempt >= 2 || (error.status != 401 && error.status != 403)) throw;
-                _refresh_session();
-            }
-        }
+        const json response = _fetch_page(unique_id, since);
         const auto& definitions = response.at("events");
         if (!definitions.is_array())
             throw std::runtime_error("Expected 'events' to be a JSON array");
@@ -367,12 +364,6 @@ void TTCalendar::_extract_calendar_info(json definition) {
     _extract_event_labels(definition);
     for (const auto& user : definition.value("calendar_users", json::array()))
         known_users[user.at("user_id").get<long long>()] = user.at("name").get<string>();
-};
-
-void TTCalendar::_refresh_session() {
-    // Refresh the session ID incase it has expired.
-    string temp_sid = getTTSessionToken(login_info.username, login_info.password);
-    s_id = temp_sid;
 };
 
 void TTCalendar::_extract_event_labels(json definition) {

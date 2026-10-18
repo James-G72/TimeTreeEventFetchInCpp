@@ -50,8 +50,8 @@ int main() {
         bool invalid_date = false;
         try { date("20250230"); } catch (const std::exception&) { invalid_date = true; }
         check(invalid_date, "Invalid date must fail");
-        TTCalendar calendar("session", {{"id", 7}, {"calendar_users", {{{"user_id", 1}, {"name", "User"}}}},
-            {"calendar_labels", {{{"id", 4}, {"name", "Label"}, {"color", 42}}}}}, {"user", "password"});
+        TTCalendar calendar({{"id", 7}, {"calendar_users", {{{"user_id", 1}, {"name", "User"}}}},
+            {"calendar_labels", {{{"id", 4}, {"name", "Label"}, {"color", 42}}}}});
         check(calendar.known_users.at(1) == "User" && calendar.label_data.at(4).colour == 42, "User and label lookup");
         auto ordinary = event("20250102T130000Z", {});
         calendar.events.emplace(ordinary.id, ordinary);

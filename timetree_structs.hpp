@@ -115,11 +115,12 @@ class TTCalendar{
         string name;
         string alias;
         int unique_id;
-        string s_id;
-        UserCredentials login_info;
         vector<EventLabels> event_labels;
 
-        TTCalendar(string sessionID, json calender_def, UserCredentials login);
+        explicit TTCalendar(json calendar_def, TTEventFetcher fetch_page = {});
+        // Replace the application page loader when needed. A loader is required
+        // only for fetch_events()/refresh_events(), not for offline model use.
+        void set_event_fetcher(TTEventFetcher fetch_page);
 
         // Fetch a full snapshot, following every sync chunk. Replace the maps
         // only after all pages have been fetched and parsed successfully.
@@ -132,9 +133,9 @@ class TTCalendar{
 
     private:
         void _extract_calendar_info(json definition);
-        void _refresh_session();
         void _extract_event_labels(json definition);
         map<string, TTEvent> _snapshot;
+        TTEventFetcher _fetch_page;
 };
 
 #endif

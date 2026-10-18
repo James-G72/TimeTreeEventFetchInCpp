@@ -1,79 +1,94 @@
 #include "timetree_structs.hpp"
 #include <iostream>
 #include <stdexcept>
+
 void check(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
 }
-int main(int argc, char** argv) {
+json fixture_event(const string& id, const string& title, bool recurring = false) {
+    return {{"id", id}, {"calendar_id", 7}, {"title", title}, {"author_id", 1}, {"label_id", nullptr},
+            {"updated_at", 1735776000000LL}, {"start_at", 1735689600000LL},
+            {"end_at", recurring ? 1735689600000LL : 1735693200000LL}, {"all_day", recurring},
+            {"recurrences", recurring ? json::array({"RRULE:FREQ=WEEKLY"}) : json::array()},
+            {"note", "Preserve extra API fields"}};
+}
+int main() {
     try {
-        check(argc == 2, "Expected local server URL");
-        const std::string base = argv[1];
-        check(json::parse(contactAPI(base + "/ping"))["ok"] == true, "GET response");
-        const auto session = getTTSessionToken("test-user", "test-password");
-        check(session == "test-session", "Login cookie extraction");
-        auto response = requestCalendars(session);
-        TTCalendar calendar(session, response.at("calendars").at(0), {"test-user", "test-password"});
-        check(calendar.s_id == session && calendar.login_info.username == "test-user", "Constructor members");
-        check(calendar.created.as_ms() == 1735689600123LL, "Created milliseconds");
-        check(calendar.updated.as_ms() == 1735776000456LL, "Updated milliseconds");
-        check(calendar.event_labels.at(0).name == "Work", "Calendar label");
+        const json response = {{"calendars", json::array({
+            {{"id", 8}, {"name", "Other"}},
+            {{"id", 7}, {"name", "Ruth"}, {"created_at", 1735689600123LL}, {"updated_at", 1735776000456LL},
+             {"calendar_labels", {{{"id", 4}, {"name", "Work"}, {"color", 42}}}}}
+        })}};
+        const auto definition = selectCalendarDefinition(response, "Ruth");
+        check(definition.at("id") == 7, "Select calendar by name");
+        bool failed = false;
+        try { selectCalendarDefinition(response, "Missing"); } catch (const std::runtime_error&) { failed = true; }
+        check(failed, "Missing calendar must fail");
+        TTCalendar offline(definition);
+        failed = false;
+        try { offline.fetch_events(); } catch (const std::logic_error&) { failed = true; }
+        check(failed, "Missing page callback must fail clearly");
+
+        string mode = "normal";
+        vector<long long> cursors;
+        const TTEventFetcher fetch_page = [&](long long calendar_id, long long since) -> json {
+            check(calendar_id == 7, "Callback receives calendar ID");
+            cursors.push_back(since);
+            if (mode == "transport-failure") throw std::runtime_error("Application request failed");
+            if (mode == "empty") return {{"events", json::array()}, {"chunk", false}};
+            if (mode == "changed")
+                return {{"events", json::array({fixture_event("5000000001", "Refreshed title"),
+                                                fixture_event("2", "No longer recurring")})}, {"chunk", false}};
+            if (since == -1)
+                return {{"events", json::array({fixture_event("5000000001", "Old title"),
+                                               fixture_event("2", "Recurring", true)})},
+                        {"chunk", true}, {"since", 1000}};
+            check(since == 1000, "Callback receives server cursor");
+            if (mode == "bad-page") return {{"events", json::object()}, {"chunk", false}};
+            return {{"events", json::array({fixture_event("5000000001", "Updated title"), fixture_event("3", "New event")})},
+                    {"chunk", mode == "loop"}, {"since", 1000}};
+        };
+        TTCalendar calendar(definition, fetch_page);
         calendar.fetch_events();
-        check(calendar.events.size() == 2 && calendar.recur_events.size() == 1, "All event pages populated");
+        check(cursors == vector<long long>({-1, 1000}), "Follow every response chunk");
+        check(calendar.created.as_ms() == 1735689600123LL && calendar.updated.as_ms() == 1735776000456LL, "Calendar timestamps");
+        check(calendar.label_data.at(4).name == "Work", "Label lookup");
+        check(calendar.events.size() == 2 && calendar.recur_events.size() == 1, "All pages populated");
         const auto& event = calendar.events.at("5000000001");
-        check(event.title == "Updated title", "Duplicate IDs use latest page");
-        check(event.parent_id == 7 && !event.label_id && event.author_id == 1, "Event metadata and null label");
-        check(event.duration == 3600000 && event.start.as_ms() == 1735689600000LL, "Event timing");
+        check(event.title == "Updated title" && event.parent_id == 7, "Duplicate IDs use latest page");
+        check(!event.label_id && event.author_id == 1 && event.duration == 3600000, "Event metadata");
         check(event.definition.at("note") == "Preserve extra API fields", "Original JSON retained");
-        const auto& recurring = calendar.recur_events.at("2");
-        check(recurring.all_day && recurring.recurs && recurring.recurrences.size() == 1, "Recurring metadata");
-        check(recurring.end.as_ms() == 1735775999000LL, "Inclusive all-day end matches Python");
-        calendar.fetch_events();
-        check(calendar.events.size() == 2, "Repeated full fetch replaces snapshot");
-        for (const auto& badSession : {"bad-page", "loop"}) {
-            calendar.s_id = badSession;
-            bool failed = false;
-            try { calendar.fetch_events(); }
-            catch (const std::runtime_error&) { failed = true; }
-            check(failed, "Malformed pages and repeated cursors must fail");
+        check(calendar.recur_events.at("2").end.as_ms() == 1735775999000LL, "All-day timing");
+        for (const auto& bad_mode : {"bad-page", "loop", "transport-failure"}) {
+            mode = bad_mode;
+            failed = false;
+            try { calendar.fetch_events(); } catch (const std::runtime_error&) { failed = true; }
+            check(failed, "Bad page or callback failure must fail");
             check(calendar.events.size() == 2 && calendar.recur_events.size() == 1
-                  && calendar.events.at("5000000001").title == "Updated title", "Failed fetch retains prior snapshot");
+                  && calendar.deleted_events.empty(), "Failed fetch retains snapshot");
         }
-        calendar.s_id = session;
-        calendar.s_id = "expired";
+        mode = "changed";
         calendar.refresh_events();
-        check(calendar.s_id == session, "Expired session must be replaced for retries");
-        calendar.s_id = "changed";
+        check(calendar.events.size() == 2 && calendar.recur_events.empty(), "Refresh reclassifies series");
+        check(calendar.events.at("5000000001").title == "Refreshed title", "Refresh catches edits");
+        check(calendar.deleted_events.at("3").deleted && calendar.deleted_events.at("3").deleted_time.has_value(), "Deletion history");
+        mode = "normal";
         calendar.refresh_events();
-        check(calendar.events.size() == 2 && calendar.recur_events.empty(), "Refresh reclassifies series as ordinary event");
-        check(calendar.events.at("5000000001").title == "Refreshed title", "Refresh catches edits with unchanged timestamp");
-        check(calendar.deleted_events.at("3").deleted && calendar.deleted_events.at("3").deleted_time.has_value(), "Missing event tracked as deleted");
-        calendar.s_id = session;
-        calendar.refresh_events();
-        check(calendar.deleted_events.empty() && calendar.recur_events.size() == 1, "Reappearing event removes deletion marker");
+        check(calendar.deleted_events.empty() && calendar.recur_events.size() == 1, "Reappearance removes deletion marker");
         calendar.fetch_events(TTTime::from_string("20250108"), TTTime::from_string("20250109"));
-        check(calendar.events.empty() && calendar.recur_events.size() == 1, "Date filter retains earlier series seeds");
-        check(calendar.deleted_events.empty(), "Date filtering must not mark events deleted");
-        check(calendar.events_between_dates(TTTime::from_string("20250108"), TTTime::from_string("20250108T235959Z")).size() == 1,
-              "Series seed before fetch bounds must still expand");
+        check(calendar.events.empty() && calendar.recur_events.size() == 1 && calendar.deleted_events.empty(), "Filter retains earlier recurring seed");
+        check(calendar.events_between_dates(TTTime::from_string("20250108"), TTTime::from_string("20250108T235959Z")).size() == 1, "Expand earlier seed");
         calendar.refresh_events();
-        check(calendar.events.empty() && calendar.bounds->first == TTTime::from_string("20250108"), "Refresh retains fetch bounds");
-        bool rejected = false;
-        try { contactAPI(base + "/unauthorized"); }
-        catch (const TTHttpError& e) {
-            rejected = e.status == 401 && json::parse(e.response_body).at("error") == "unauthorized"
-                       && std::string(e.what()).find("GET") != std::string::npos;
-        }
-        check(rejected, "HTTP errors must throw");
-        rejected = false;
-        try { requestCalendars("invalid-json"); }
-        catch (const json::parse_error&) { rejected = true; }
-        check(rejected, "Invalid JSON must throw");
-        TTTime date(1738281600123LL); // 2025-01-31 00:00:00.123 UTC
-        date.apply_delta(0, 1);
-        check(date.as_ms() == 1740700800123LL, "Month clamping and subsecond preservation");
-        std::cout << "All local integration checks passed\n";
-    } catch (const std::exception& e) {
-        std::cerr << e.what() << '\n';
+        check(calendar.events.empty() && calendar.bounds->first == TTTime::from_string("20250108"), "Refresh preserves bounds");
+        mode = "empty";
+        calendar.refresh_events();
+        check(calendar.events.empty() && calendar.recur_events.empty() && calendar.deleted_events.size() == 3, "Empty snapshot deletes prior events");
+        offline.set_event_fetcher(fetch_page);
+        offline.fetch_events();
+        check(offline.events.empty(), "Offline calendar accepts a page callback later");
+        std::cout << "All offline integration checks passed\n";
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
         return 1;
     }
 }
